@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Documentation – Medicaid Enrollment Visualization</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      max-width: 900px;
+    }
+    h1, h2, h3 {
+      margin-top: 1.2rem;
+    }
+    a {
+      color: #1f4f8f;
+      text-decoration: none;
+      font-weight: bold;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+
+  <a href="index.html">← Back to Visualization</a>
+
+  <h1>Documentation: Medicaid Enrollment Trends (2014–2025)</h1>
+
+  <p>
+    This page describes how I designed my D3 visualization and what I learned from it.
+  </p>
+
+  <h2>1. Design Process</h2>
+  <p>
+    First, I loaded the dataset in a small D3 test file to see the columns and make
+    sure there were no big problems. The data has state, total Medicaid enrollees,
+    VIII group enrollees, newly eligible enrollees, and monthly dates from 2014 to 2025.
+  </p>
+  <p>
+    Then I drew a few sketches on paper. My main ideas were:
+  </p>
+  <ul>
+    <li>A line chart to show total Medicaid enrollment over time.</li>
+    <li>A dropdown menu to choose any state.</li>
+    <li>Two lines on the same chart: the selected state vs the national total.</li>
+    <li>Options to switch the metric (total Medicaid, VIII group, newly eligible).</li>
+  </ul>
+  <p>
+    After that, I built a simple D3 version with just one line, then added the second
+    line, axes, and tooltips. I adjusted font sizes, margins, and spacing so that
+    labels were not cut off. I also tested different colors to make sure the lines
+    were easy to tell apart.
+  </p>
+
+  <p><strong>(Insert scanned sketches here.)</strong></p>
+
+  <h2>2. Design Rationale</h2>
+  <p>
+    <strong>Line chart:</strong> I used a line chart because the key question is how
+    enrollment changes over time. A line makes increases and decreases easy to see.
+  </p>
+  <p>
+    <strong>Color choices:</strong> I used blue for the national total and orange for
+    the selected state. These colors have good contrast and are still readable for
+    people with mild color blindness.
+  </p>
+  <p>
+    <strong>Dropdown for state:</strong> Instead of showing many states at once, I
+    used a dropdown. This keeps the chart clean and lets the user focus on one state
+    at a time.
+  </p>
+  <p>
+    <strong>Metric selection:</strong> The Metric menu lets the user switch between
+    total Medicaid enrollees, VIII group enrollees, and newly eligible enrollees.
+    This uses the same chart layout but gives different views of the data.
+  </p>
+  <p>
+    <strong>Tooltips:</strong> Tooltips show the exact values for the state and the
+    national total at a given month. This keeps the chart simple while still giving
+    precise numbers when needed.
+  </p>
+
+  <h2>3. Findings from the Visualization</h2>
+  <h3>Finding 1: National enrollment grows over time</h3>
+  <p>
+    When I choose the national total in the chart, the line shows a general upward
+    trend in Medicaid enrollment from 2014 to 2025.
+  </p>
+  <p><strong>(Insert screenshot of national trend here.)</strong></p>
+
+  <h3>Finding 2: States have different patterns</h3>
+  <p>
+    When I pick different states, I see that some states grow faster and some grow
+    slower than the national line. Some states have clear jumps in enrollment around
+    the time of expansion.
+  </p>
+  <p><strong>(Insert screenshot comparing one state vs national here.)</strong></p>
+
+  <h3>Finding 3: Expansion (VIII group) is important</h3>
+  <p>
+    When I switch the metric to VIII group enrollees or newly eligible enrollees,
+    expansion states show a large number of people in this group, especially in the
+    early years after expansion. Non-expansion states show very small or zero values.
+  </p>
+  <p><strong>(Insert screenshot showing VIII group metric here.)</strong></p>
+
+  <h2>4. Demo Video</h2>
+  <p>
+    Below is my 2–4 minute screen-capture video. In the video I show how to use the
+    visualization, how to change the state and metric, and I explain the main
+    findings.
+  </p>
+
+  <!-- Replace the src with your real YouTube link -->
+  <iframe
+    width="560"
+    height="315"
+    src="https://www.youtube.com/embed/YOUR_VIDEO_ID"
+    title="Medicaid Enrollment Visualization Demo"
+    frameborder="0"
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+    referrerpolicy="strict-origin-when-cross-origin"
+    allowfullscreen>
+  </iframe>
+
+</body>
+</html>

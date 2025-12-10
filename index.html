@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Medicaid Enrollment Trends (2014–2021)</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    :root {
+      --blue: #1f77b4;
+      --orange: #ff7f0e;
+      --green: #2ca02c;
+      --border: #dddddd;
+      --bg: #fafafa;
+      --text-muted: #666666;
+    }
+
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #f6f6f6;
+    }
+
+    .page-wrap {
+      max-width: 1100px;
+      margin: 0 auto;
+      background: white;
+      padding: 20px 24px 28px;
+      border-radius: 6px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+    }
+
+    .top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.6rem;
+    }
+
+    .nav-links a {
+      margin-left: 14px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #1f4f8f;
+      text-decoration: none;
+    }
+
+    .nav-links a:first-child {
+      margin-left: 0;
+    }
+
+    .nav-links a:hover {
+      text-decoration: underline;
+    }
+
+    #controls {
+      margin: 14px 0 10px 0;
+      padding: 10px 12px;
+      border-radius: 4px;
+      background: #f3f7fb;
+      border: 1px solid #d7e2f4;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 18px;
+      align-items: center;
+    }
+
+    label {
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+
+    select {
+      padding: 4px 6px;
+      font-size: 0.9rem;
+      border-radius: 4px;
+      border: 1px solid #cccccc;
+      background: white;
+    }
+
+    #mode-controls {
+      font-size: 0.9rem;
+    }
+
+    #mode-controls label {
+      font-weight: normal;
+      margin-right: 8px;
+    }
+
+    svg {
+      border: 1px solid var(--border);
+      background: var(--bg);
+      margin-top: 6px;
+      border-radius: 3px;
+    }
+
+    .axis path,
+    .axis line {
+      stroke: #cccccc;
+    }
+
+    .line {
+      fill: none;
+      stroke-width: 2.5px;
+    }
+
+    .line.total {
+      stroke: var(--blue);
+    }
+
+    .line.viii {
+      stroke: var(--orange);
+    }
+
+    .line.newly {
+      stroke: var(--green);
+    }
+
+    .line.share {
+      stroke: var(--green);
+    }
+
+    .chart-title {
+      font-weight: bold;
+      margin-top: 10px;
+      margin-bottom: 4px;
+    }
+
+    .legend {
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+
+    .legend rect {
+      stroke: none;
+    }
+
+    .legend.inactive text {
+      opacity: 0.4;
+    }
+
+    .legend.inactive rect {
+      opacity: 0.3;
+    }
+
+    .tooltip {
+      position: absolute;
+      background: white;
+      border: 1px solid #ccc;
+      padding: 6px 8px;
+      font-size: 0.8rem;
+      pointer-events: none;
+      border-radius: 4px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+      z-index: 10;
+    }
+
+    .no-data {
+      font-size: 0.85rem;
+      fill: var(--text-muted);
+    }
+
+    .hint {
+      margin-top: 6px;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="page-wrap">
+    <div class="top-bar">
+      <h1>Medicaid Enrollment Trends (2014–2021)</h1>
+      <div class="nav-links">
+        <a href="doc.html">Documentation</a>
+        <!-- Replace with your real YouTube URL -->
+        <a href="https://youtu.be/YOUR_VIDEO_ID" target="_blank">Demo video</a>
+      </div>
+    </div>
+
+    <div id="controls">
+      <div>
+        <label for="state-select">State:</label>
+        <select id="state-select"></select>
+      </div>
+
+      <div id="mode-controls">
+        <label>
+          <input type="radio" name="mode" value="counts" checked />
+          Enrollment counts
+        </label>
+        <label>
+          <input type="radio" name="mode" value="share" />
+          Expansion share (%)
+        </label>
+      </div>
+    </div>
+
+    <div class="chart-title" id="chart-title">
+      Enrollment counts for selected state
+    </div>
+    <svg id="chart" width="900" height="420"></svg>
+    <div class="hint">
+      Tip: Click in the chart to zoom in (time range halves around the click).
+      Double-click to reset. In counts mode, click legend items to hide or show lines.
+    </div>
+
+    <div id="tooltip" class="tooltip" style="opacity: 0;"></div>
+  </div>
+
+  <script>
+    const svg = d3.select("#chart");
+    const margin = { top: 50, right: 40, bottom: 50, left: 80 };
+    const width = +svg.attr("width") - margin.left - margin.right;
+    const height = +svg.attr("height") - margin.top - margin.bottom;
+
+    // Main chart group
+    const chartG = svg.append("g")
+      .attr("transform", `translate(${margin.left},${margin.top})`);
+
+    // Clip path so lines don't draw outside the plot area
+    const defs = svg.append("defs");
+    defs.append("clipPath")
+      .attr("id", "plot-clip")
+      .append("rect")
+      .attr("width", width)
+      .attr("height", height);
+
+    // Group that is clipped (lines + overlay go here)
+    const plotArea = chartG.append("g")
+      .attr("class", "plot-area")
+      .attr("clip-path", "url(#plot-clip)");
+
+    const xScale = d3.scaleTime().range([0, width]);
+    const yScale = d3.scaleLinear().range([height, 0]);
+
+    const xAxisG = chartG.append("g")
+      .attr("class", "axis x-axis")
+      .attr("transform", `translate(0,${height})`);
+
+    const yAxisG = chartG.append("g")
+      .attr("class", "axis y-axis");
+
+    // Axis labels
+    chartG.append("text")
+      .attr("text-anchor", "middle")
+      .attr("x", width / 2)
+      .attr("y", height + 40)
+      .style("font-size", "0.8rem")
+      .text("Time");
+
+    const yLabel = chartG.append("text")
+      .attr("text-anchor", "middle")
+      .attr("transform", "rotate(-90)")
+      .attr("x", -height / 2)
+      .attr("y", -60)
+      .style("font-size", "0.8rem")
+      .text("Number of enrollees");
+
+    const tooltip = d3.select("#tooltip");
+
+    const overlay = plotArea.append("rect")
+      .attr("width", width)
+      .attr("height", height)
+      .style("fill", "none")
+      .style("pointer-events", "all");
+
+    const dateFmt = d3.timeFormat("%Y-%m");
+    const numFmt = d3.format(",.0f");
+    const pctFmt = d3.format(".1f");
+    const bisectDate = d3.bisector(d => d.date).left;
+
+    const stateSelect = d3.select("#state-select");
+    const modeInputs = d3.selectAll("input[name='mode']");
+    const chartTitle = d3.select("#chart-title");
+
+    // Series configuration for counts mode
+    const seriesConfig = [
+      {
+        key: "Total Medicaid Enrollees",
+        id: "total",
+        label: "Total Medicaid enrollees",
+        color: "#1f77b4",
+        visible: true
+      },
+      {
+        key: "Total VIII Group Enrollees",
+        id: "viii",
+        label: "VIII group enrollees",
+        color: "#ff7f0e",
+        visible: true
+      },
+      {
+        key: "Total VIII Group Newly Eligible Enrollees",
+        id: "newly",
+        label: "Newly eligible VIII enrollees",
+        color: "#2ca02c",
+        visible: true
+      }
+    ];
+
+    let rawData = [];
+    let currentState = null;
+    let currentMode = "counts";
+    let currentSeriesData = [];
+    let fullDomain = null;
+
+    const legendG = chartG.append("g")
+      .attr("class", "legend")
+      .attr("transform", "translate(0,-30)");
+
+    const noDataText = chartG.append("text")
+      .attr("class", "no-data")
+      .attr("x", width / 2)
+      .attr("y", height / 2)
+      .attr("text-anchor", "middle")
+      .style("display", "none")
+      .text("No data for this state.");
+
+    const lineGenerator = d3.line()
+      .defined(d => d.value != null && !isNaN(d.value))
+      .x(d => xScale(d.date))
+      .y(d => yScale(d.value));
+
+    // Group where we draw the line paths
+    const lineGroup = plotArea.append("g");
+
+    // Helper: draw x-axis differently depending on zoom level
+    function drawXAxis() {
+      const domain = xScale.domain();
+      const spanMs = domain[1] - domain[0];
+      const spanMonths = spanMs / (1000 * 60 * 60 * 24 * 30);
+
+      let xAxis;
+      if (spanMonths <= 18) {
+        // Zoomed in: month + year
+        xAxis = d3.axisBottom(xScale)
+          .ticks(d3.timeMonth.every(3))
+          .tickFormat(d3.timeFormat("%b %Y")); // Jan 2018, etc.
+      } else {
+        // Zoomed out: year only
+        xAxis = d3.axisBottom(xScale)
+          .ticks(d3.timeYear.every(1))
+          .tickFormat(d3.timeFormat("%Y"));
+      }
+
+      xAxisG.transition().call(xAxis);
+    }
+
+    // ----- Load and prepare data -----
+    d3.csv("medicaid_12012025.csv", d3.autoType)
+      .then(data => {
+        // Keep 2014–2021 only, then create date
+        data = data.filter(d =>
+          d["Enrollment Year"] >= 2014 &&
+          d["Enrollment Year"] <= 2021
+        );
+
+        data.forEach(d => {
+          d.date = new Date(d["Enrollment Year"], d["Enrollment Month"] - 1, 1);
+        });
+
+        rawData = data;
+
+        // States list (exclude Totals)
+        let states = Array.from(new Set(rawData.map(d => d.State)));
+        states = states.filter(s => s !== "Totals");
+        states.sort(d3.ascending);
+
+        stateSelect.selectAll("option")
+          .data(states)
+          .enter()
+          .append("option")
+          .attr("value", d => d)
+          .text(d => d);
+
+        // Legend
+        const legendItems = legendG.selectAll("g.legend-item")
+          .data(seriesConfig)
+          .enter()
+          .append("g")
+          .attr("class", "legend-item")
+          .attr("transform", (d, i) => `translate(${i * 210},0)`)
+          .on("click", (event, d) => {
+            if (currentMode === "share") return; // ignore clicks in share mode
+            d.visible = !d.visible;
+            updateChart(currentState, currentMode, false);
+          });
+
+        legendItems.append("rect")
+          .attr("x", 0)
+          .attr("y", -10)
+          .attr("width", 12)
+          .attr("height", 12)
+          .attr("fill", d => d.color);
+
+        legendItems.append("text")
+          .attr("x", 18)
+          .attr("y", 0)
+          .attr("alignment-baseline", "middle")
+          .text(d => d.label);
+
+        // Default state
+        stateSelect.property("value", "Indiana");
+        currentState = stateSelect.property("value");
+
+        // Handlers
+        stateSelect.on("change", () => {
+          currentState = stateSelect.property("value");
+          fullDomain = null;
+          updateChart(currentState, currentMode, false);
+        });
+
+        modeInputs.on("change", (event) => {
+          currentMode = event.target.value;
+          fullDomain = null;
+          updateChart(currentState, currentMode, false);
+        });
+
+        // Tooltip + click zoom
+        overlay
+          .on("mousemove", function(event) {
+            if (!currentSeriesData.length) return;
+
+            const [mx] = d3.pointer(event, this);
+            const x0 = xScale.invert(mx);
+
+            const refSeries = currentSeriesData[0];
+            if (!refSeries || !refSeries.values.length) return;
+
+            const i = bisectDate(refSeries.values, x0, 1);
+            if (i <= 0 || i >= refSeries.values.length) return;
+
+            const d0 = refSeries.values[i - 1];
+            const d1 = refSeries.values[i];
+            const d = x0 - d0.date > d1.date - x0 ? d1 : d0;
+            const dateKey = +d.date;
+
+            let html = `<strong>${currentState}</strong><br/>${dateFmt(d.date)}<br/>`;
+
+            if (currentMode === "counts") {
+              currentSeriesData.forEach(series => {
+                const pt = series.values.find(p => +p.date === dateKey);
+                if (pt && pt.value != null) {
+                  html += `${series.label}: ${numFmt(pt.value)}<br/>`;
+                }
+              });
+            } else {
+              const pt = refSeries.values.find(p => +p.date === dateKey);
+              if (pt && pt.value != null) {
+                html += `Expansion share: ${pctFmt(pt.value)}%`;
+              }
+            }
+
+            tooltip
+              .style("opacity", 1)
+              .html(html)
+              .style("left", (event.pageX + 10) + "px")
+              .style("top", (event.pageY - 28) + "px");
+          })
+          .on("mouseleave", () => {
+            tooltip.style("opacity", 0);
+          })
+          .on("click", function(event) {
+            // Step zoom: halve time window centered on click
+            if (!currentSeriesData.length || !fullDomain) return;
+
+            const [mx] = d3.pointer(event, this);
+            const x0 = xScale.invert(mx);
+            const domain = xScale.domain();
+            const span = domain[1] - domain[0];
+            const newSpan = span / 2;
+
+            const minSpan = 1000 * 60 * 60 * 24 * 90; // ~3 months
+            if (newSpan < minSpan) return;
+
+            let newStart = new Date(x0.getTime() - newSpan / 2);
+            let newEnd = new Date(x0.getTime() + newSpan / 2);
+
+            if (newStart < fullDomain[0]) {
+              newStart = fullDomain[0];
+              newEnd = new Date(newStart.getTime() + newSpan);
+            }
+            if (newEnd > fullDomain[1]) {
+              newEnd = fullDomain[1];
+              newStart = new Date(newEnd.getTime() - newSpan);
+            }
+
+            xScale.domain([newStart, newEnd]);
+            updateChart(currentState, currentMode, true);
+          })
+          .on("dblclick", () => {
+            // Reset zoom
+            if (!fullDomain) return;
+            xScale.domain(fullDomain);
+            updateChart(currentState, currentMode, true);
+          });
+
+        // Initial draw
+        updateChart(currentState, currentMode, false);
+      })
+      .catch(err => {
+        console.error("Error loading CSV:", err);
+        alert("Cannot load medicaid_12012025.csv. Make sure it is in the same folder and served over HTTP(s).");
+      });
+
+    function updateChart(stateName, mode, keepXDomain) {
+      const stateRows = rawData.filter(d => d.State === stateName);
+
+      if (!stateRows.length) {
+        noDataText.style("display", null);
+        lineGroup.selectAll("path.series").remove();
+        currentSeriesData = [];
+        return;
+      } else {
+        noDataText.style("display", "none");
+      }
+
+      // Sort by date to avoid zig-zags
+      stateRows.sort((a, b) => a.date - b.date);
+
+      let seriesData = [];
+
+      if (mode === "counts") {
+        chartTitle.text(`Enrollment counts for ${stateName}`);
+        yLabel.text("Number of enrollees");
+
+        seriesData = seriesConfig.map(cfg => {
+          const values = stateRows.map(d => ({
+            date: d.date,
+            value: d[cfg.key]
+          })).filter(d => d.value != null && !isNaN(d.value));
+          return { ...cfg, values };
+        }).filter(s => s.visible);
+
+      } else {
+        chartTitle.text(`Expansion share for ${stateName} (VIII / Total)`);
+        yLabel.text("Expansion share (%)");
+
+        const values = stateRows.map(d => {
+          const total = d["Total Medicaid Enrollees"];
+          const viii = d["Total VIII Group Enrollees"];
+          const share = (total && viii) ? (viii / total) * 100 : null;
+          return { date: d.date, value: share };
+        }).filter(d => d.value != null && !isNaN(d.value));
+
+        seriesData = [{
+          id: "share",
+          label: "Expansion share",
+          color: "#2ca02c",
+          values
+        }];
+      }
+
+      currentSeriesData = seriesData;
+
+      if (!seriesData.length || !seriesData[0].values.length) {
+        lineGroup.selectAll("path.series").remove();
+        noDataText.style("display", null);
+        return;
+      }
+
+      // x-domain: full period for this state, or keep zoomed
+      if (!keepXDomain || !fullDomain) {
+        const allDates = seriesData.flatMap(s => s.values.map(v => v.date));
+        fullDomain = d3.extent(allDates);
+        xScale.domain(fullDomain);
+      }
+
+      const domain = xScale.domain();
+
+      // y-domain based on visible portion
+      const visibleValues = seriesData.flatMap(s =>
+        s.values
+          .filter(v => v.date >= domain[0] && v.date <= domain[1])
+          .map(v => v.value)
+      );
+      let maxVal = d3.max(visibleValues);
+
+      if (mode === "counts") {
+        yScale.domain([0, maxVal ? maxVal * 1.1 : 1]);
+      } else {
+        yScale.domain([0, Math.min(100, maxVal ? maxVal * 1.1 : 100)]);
+      }
+
+      // Dynamic x-axis & y-axis
+      drawXAxis();
+
+      if (mode === "counts") {
+        yAxisG.transition().call(
+          d3.axisLeft(yScale).ticks(6).tickFormat(d3.format(".2s"))
+        );
+      } else {
+        yAxisG.transition().call(
+          d3.axisLeft(yScale).ticks(6).tickFormat(d => d + "%")
+        );
+      }
+
+      // Legend style
+      legendG.selectAll("g.legend-item")
+        .classed("inactive", d => mode === "counts" ? !d.visible : true);
+
+      // Draw lines
+      const lines = lineGroup.selectAll("path.series")
+        .data(seriesData, d => d.id);
+
+      lines.enter()
+        .append("path")
+        .attr("class", d => `line series ${d.id}`)
+        .attr("stroke", d => d.color)
+        .merge(lines)
+        .transition()
+        .attr("d", d => lineGenerator(d.values));
+
+      lines.exit().remove();
+    }
+  </script>
+</body>
+</html>
