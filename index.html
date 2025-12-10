@@ -141,8 +141,9 @@
       stroke: none;
     }
 
+    /* Dim non-focused series when one is focused */
     .legend.inactive text {
-      opacity: 0.4;
+      opacity: 0.35;
     }
 
     .legend.inactive rect {
@@ -170,42 +171,6 @@
       margin-top: 6px;
       font-size: 0.8rem;
       color: var(--text-muted);
-    }
-
-    /* Summary panel under chart */
-    .summary-card {
-      margin-top: 12px;
-      padding: 10px 12px;
-      border-radius: 4px;
-      background: #fafafa;
-      border: 1px solid #e0e0e0;
-      font-size: 0.85rem;
-    }
-
-    .summary-header {
-      font-weight: 600;
-      margin-bottom: 4px;
-    }
-
-    .summary-grid {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 16px;
-      margin-top: 4px;
-    }
-
-    .summary-item {
-      min-width: 150px;
-    }
-
-    .summary-label {
-      font-size: 0.78rem;
-      color: var(--text-muted);
-    }
-
-    .summary-value {
-      font-weight: 600;
-      font-size: 0.95rem;
     }
   </style>
 </head>
@@ -244,10 +209,9 @@
     <svg id="chart" width="900" height="420"></svg>
     <div class="hint">
       Tip: Click in the chart to zoom in (time range halves around the click).
-      Double-click to reset. In counts mode, click legend items to hide or show lines.
+      Double-click to reset. In counts mode, click a legend item to focus on that line
+      and rescale the y-axis; click again to go back to the shared scale.
     </div>
-
-    <div id="summary" class="summary-card"></div>
 
     <div id="tooltip" class="tooltip" style="opacity: 0;"></div>
   </div>
@@ -302,7 +266,6 @@
       .text("Number of enrollees");
 
     const tooltip = d3.select("#tooltip");
-    const summaryDiv = d3.select("#summary");
 
     const overlay = plotArea.append("rect")
       .attr("width", width)
@@ -311,7 +274,6 @@
       .style("pointer-events", "all");
 
     const dateFmt = d3.timeFormat("%Y-%m");
-    const datePretty = d3.timeFormat("%b %Y");
     const numFmt = d3.format(",.0f");
     const pctFmt = d3.format(".1f");
     const bisectDate = d3.bisector(d => d.date).left;
@@ -320,7 +282,7 @@
     const modeInputs = d3.selectAll("input[name='mode']");
     const chartTitle = d3.select("#chart-title");
 
-    // Display name helper (for Totals -> U.S.)
+    // Display name helper (Totals -> U.S.)
     function displayStateName(s) {
       return s === "Totals" ? "United States (total)" : s;
     }
@@ -331,22 +293,19 @@
         key: "Total Medicaid Enrollees",
         id: "total",
         label: "Total Medicaid enrollees",
-        color: "#1f77b4",
-        visible: true
+        color: "#1f77b4"
       },
       {
         key: "Total VIII Group Enrollees",
         id: "viii",
         label: "VIII group enrollees",
-        color: "#ff7f0e",
-        visible: true
+        color: "#ff7f0e"
       },
       {
         key: "Total VIII Group Newly Eligible Enrollees",
         id: "newly",
         label: "Newly eligible VIII enrollees",
-        color: "#2ca02c",
-        visible: true
+        color: "#2ca02c"
       }
     ];
 
@@ -355,6 +314,7 @@
     let currentMode = "counts";
     let currentSeriesData = [];
     let fullDomain = null;
+    let focusedSeriesId = null;  // which series is focused via legend (counts mode only)
 
     const legendG = chartG.append("g")
       .attr("class", "legend")
@@ -440,8 +400,13 @@
           .attr("class", "legend-item")
           .attr("transform", (d, i) => `translate(${i * 210},0)`)
           .on("click", (event, d) => {
-            if (currentMode === "share") return; // ignore clicks in share mode
-            d.visible = !d.visible;
+            if (currentMode !== "counts") return;
+            // Toggle focus: click once to focus on this series, again to reset
+            if (focusedSeriesId === d.id) {
+              focusedSeriesId = null;
+            } else {
+              focusedSeriesId = d.id;
+            }
             updateChart(currentState, currentMode, false);
           });
 
@@ -472,6 +437,8 @@
 
         modeInputs.on("change", (event) => {
           currentMode = event.target.value;
+          // reset focused state when switching mode
+          focusedSeriesId = null;
           fullDomain = null;
           updateChart(currentState, currentMode, false);
         });
@@ -570,7 +537,6 @@
         noDataText.style("display", null);
         lineGroup.selectAll("path.series").remove();
         currentSeriesData = [];
-        summaryDiv.html("");
         return;
       } else {
         noDataText.style("display", "none");
@@ -591,7 +557,7 @@
             value: d[cfg.key]
           })).filter(d => d.value != null && !isNaN(d.value));
           return { ...cfg, values };
-        }).filter(s => s.visible);
+        });
 
       } else {
         chartTitle.text(`Expansion share for ${displayStateName(stateName)} (VIII / Total)`);
@@ -617,7 +583,6 @@
       if (!seriesData.length || !seriesData[0].values.length) {
         lineGroup.selectAll("path.series").remove();
         noDataText.style("display", null);
-        summaryDiv.html("");
         return;
       }
 
@@ -630,17 +595,49 @@
 
       const domain = xScale.domain();
 
-      // y-domain based on visible portion
-      const visibleValues = seriesData.flatMap(s =>
+      // Values in visible x-range (for all series)
+      const allVisibleValues = seriesData.flatMap(s =>
         s.values
           .filter(v => v.date >= domain[0] && v.date <= domain[1])
           .map(v => v.value)
       );
-      let maxVal = d3.max(visibleValues);
 
+      // y-domain
       if (mode === "counts") {
-        yScale.domain([0, maxVal ? maxVal * 1.1 : 1]);
+        let valuesForDomain;
+
+        if (focusedSeriesId) {
+          const focusSeries = seriesData.find(s => s.id === focusedSeriesId);
+          if (focusSeries) {
+            valuesForDomain = focusSeries.values
+              .filter(v => v.date >= domain[0] && v.date <= domain[1])
+              .map(v => v.value);
+          } else {
+            valuesForDomain = allVisibleValues;
+          }
+        } else {
+          valuesForDomain = allVisibleValues;
+        }
+
+        let minVal = d3.min(valuesForDomain);
+        let maxVal = d3.max(valuesForDomain);
+
+        if (!valuesForDomain.length || maxVal == null) {
+          minVal = 0;
+          maxVal = 1;
+        }
+
+        if (focusedSeriesId) {
+          const range = maxVal - minVal || maxVal || 1;
+          const padding = range * 0.1;
+          yScale.domain([Math.max(0, minVal - padding), maxVal + padding]);
+        } else {
+          yScale.domain([0, maxVal ? maxVal * 1.1 : 1]);
+        }
+
       } else {
+        // share mode
+        let maxVal = d3.max(allVisibleValues);
         yScale.domain([0, Math.min(100, maxVal ? maxVal * 1.1 : 100)]);
       }
 
@@ -657,9 +654,11 @@
         );
       }
 
-      // Legend style
+      // Legend style: dim non-focused items when focused
       legendG.selectAll("g.legend-item")
-        .classed("inactive", d => mode === "counts" ? !d.visible : true);
+        .classed("inactive", d =>
+          mode === "counts" && focusedSeriesId && d.id !== focusedSeriesId
+        );
 
       // Draw lines
       const lines = lineGroup.selectAll("path.series")
@@ -674,40 +673,6 @@
         .attr("d", d => lineGenerator(d.values));
 
       lines.exit().remove();
-
-      // ------- Summary text under chart -------
-      const latestRow = stateRows[stateRows.length - 1];
-      const latestDate = latestRow.date;
-      const total = latestRow["Total Medicaid Enrollees"];
-      const viii = latestRow["Total VIII Group Enrollees"];
-      const newly = latestRow["Total VIII Group Newly Eligible Enrollees"];
-      const share = total && viii ? (viii / total) * 100 : null;
-
-      let summaryHTML = `
-        <div class="summary-header">
-          Latest data for <strong>${displayStateName(stateName)}</strong> (${datePretty(latestDate)}):
-        </div>
-        <div class="summary-grid">
-          <div class="summary-item">
-            <div class="summary-label">Total Medicaid enrollees</div>
-            <div class="summary-value">${total != null ? numFmt(total) : "–"}</div>
-          </div>
-          <div class="summary-item">
-            <div class="summary-label">VIII group enrollees</div>
-            <div class="summary-value">${viii != null ? numFmt(viii) : "–"}</div>
-          </div>
-          <div class="summary-item">
-            <div class="summary-label">Newly eligible VIII enrollees</div>
-            <div class="summary-value">${newly != null ? numFmt(newly) : "–"}</div>
-          </div>
-          <div class="summary-item">
-            <div class="summary-label">Expansion share of total</div>
-            <div class="summary-value">${share != null ? pctFmt(share) + "%" : "–"}</div>
-          </div>
-        </div>
-      `;
-
-      summaryDiv.html(summaryHTML);
     }
   </script>
 </body>
