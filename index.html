@@ -171,6 +171,42 @@
       font-size: 0.8rem;
       color: var(--text-muted);
     }
+
+    /* Summary panel under chart */
+    .summary-card {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 4px;
+      background: #fafafa;
+      border: 1px solid #e0e0e0;
+      font-size: 0.85rem;
+    }
+
+    .summary-header {
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .summary-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-top: 4px;
+    }
+
+    .summary-item {
+      min-width: 150px;
+    }
+
+    .summary-label {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+
+    .summary-value {
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
   </style>
 </head>
 <body>
@@ -210,6 +246,8 @@
       Tip: Click in the chart to zoom in (time range halves around the click).
       Double-click to reset. In counts mode, click legend items to hide or show lines.
     </div>
+
+    <div id="summary" class="summary-card"></div>
 
     <div id="tooltip" class="tooltip" style="opacity: 0;"></div>
   </div>
@@ -264,6 +302,7 @@
       .text("Number of enrollees");
 
     const tooltip = d3.select("#tooltip");
+    const summaryDiv = d3.select("#summary");
 
     const overlay = plotArea.append("rect")
       .attr("width", width)
@@ -272,6 +311,7 @@
       .style("pointer-events", "all");
 
     const dateFmt = d3.timeFormat("%Y-%m");
+    const datePretty = d3.timeFormat("%b %Y");
     const numFmt = d3.format(",.0f");
     const pctFmt = d3.format(".1f");
     const bisectDate = d3.bisector(d => d.date).left;
@@ -279,6 +319,11 @@
     const stateSelect = d3.select("#state-select");
     const modeInputs = d3.selectAll("input[name='mode']");
     const chartTitle = d3.select("#chart-title");
+
+    // Display name helper (for Totals -> U.S.)
+    function displayStateName(s) {
+      return s === "Totals" ? "United States (total)" : s;
+    }
 
     // Series configuration for counts mode
     const seriesConfig = [
@@ -368,17 +413,24 @@
 
         rawData = data;
 
-        // States list (exclude Totals)
+        // States list, with Totals first if present
         let states = Array.from(new Set(rawData.map(d => d.State)));
-        states = states.filter(s => s !== "Totals");
-        states.sort(d3.ascending);
+        const hasTotals = states.includes("Totals");
+
+        if (hasTotals) {
+          states = states.filter(s => s !== "Totals");
+          states.sort(d3.ascending);
+          states.unshift("Totals");
+        } else {
+          states.sort(d3.ascending);
+        }
 
         stateSelect.selectAll("option")
           .data(states)
           .enter()
           .append("option")
           .attr("value", d => d)
-          .text(d => d);
+          .text(d => displayStateName(d));
 
         // Legend
         const legendItems = legendG.selectAll("g.legend-item")
@@ -406,9 +458,10 @@
           .attr("alignment-baseline", "middle")
           .text(d => d.label);
 
-        // Default state
-        stateSelect.property("value", "Indiana");
-        currentState = stateSelect.property("value");
+        // Default state: U.S. total if available, else first state
+        const defaultState = hasTotals ? "Totals" : states[0];
+        stateSelect.property("value", defaultState);
+        currentState = defaultState;
 
         // Handlers
         stateSelect.on("change", () => {
@@ -442,7 +495,7 @@
             const d = x0 - d0.date > d1.date - x0 ? d1 : d0;
             const dateKey = +d.date;
 
-            let html = `<strong>${currentState}</strong><br/>${dateFmt(d.date)}<br/>`;
+            let html = `<strong>${displayStateName(currentState)}</strong><br/>${dateFmt(d.date)}<br/>`;
 
             if (currentMode === "counts") {
               currentSeriesData.forEach(series => {
@@ -517,6 +570,7 @@
         noDataText.style("display", null);
         lineGroup.selectAll("path.series").remove();
         currentSeriesData = [];
+        summaryDiv.html("");
         return;
       } else {
         noDataText.style("display", "none");
@@ -528,7 +582,7 @@
       let seriesData = [];
 
       if (mode === "counts") {
-        chartTitle.text(`Enrollment counts for ${stateName}`);
+        chartTitle.text(`Enrollment counts for ${displayStateName(stateName)}`);
         yLabel.text("Number of enrollees");
 
         seriesData = seriesConfig.map(cfg => {
@@ -540,7 +594,7 @@
         }).filter(s => s.visible);
 
       } else {
-        chartTitle.text(`Expansion share for ${stateName} (VIII / Total)`);
+        chartTitle.text(`Expansion share for ${displayStateName(stateName)} (VIII / Total)`);
         yLabel.text("Expansion share (%)");
 
         const values = stateRows.map(d => {
@@ -563,6 +617,7 @@
       if (!seriesData.length || !seriesData[0].values.length) {
         lineGroup.selectAll("path.series").remove();
         noDataText.style("display", null);
+        summaryDiv.html("");
         return;
       }
 
@@ -619,6 +674,40 @@
         .attr("d", d => lineGenerator(d.values));
 
       lines.exit().remove();
+
+      // ------- Summary text under chart -------
+      const latestRow = stateRows[stateRows.length - 1];
+      const latestDate = latestRow.date;
+      const total = latestRow["Total Medicaid Enrollees"];
+      const viii = latestRow["Total VIII Group Enrollees"];
+      const newly = latestRow["Total VIII Group Newly Eligible Enrollees"];
+      const share = total && viii ? (viii / total) * 100 : null;
+
+      let summaryHTML = `
+        <div class="summary-header">
+          Latest data for <strong>${displayStateName(stateName)}</strong> (${datePretty(latestDate)}):
+        </div>
+        <div class="summary-grid">
+          <div class="summary-item">
+            <div class="summary-label">Total Medicaid enrollees</div>
+            <div class="summary-value">${total != null ? numFmt(total) : "–"}</div>
+          </div>
+          <div class="summary-item">
+            <div class="summary-label">VIII group enrollees</div>
+            <div class="summary-value">${viii != null ? numFmt(viii) : "–"}</div>
+          </div>
+          <div class="summary-item">
+            <div class="summary-label">Newly eligible VIII enrollees</div>
+            <div class="summary-value">${newly != null ? numFmt(newly) : "–"}</div>
+          </div>
+          <div class="summary-item">
+            <div class="summary-label">Expansion share of total</div>
+            <div class="summary-value">${share != null ? pctFmt(share) + "%" : "–"}</div>
+          </div>
+        </div>
+      `;
+
+      summaryDiv.html(summaryHTML);
     }
   </script>
 </body>
