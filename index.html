@@ -232,8 +232,8 @@
     </div>
     <svg id="chart" width="900" height="420"></svg>
     <div class="hint">
-      Tip: Use Zoom in / Zoom out / Reset to adjust the time range.
-      You can also click inside the chart to zoom in around that point, and double-click to reset.
+      Use Zoom in / Zoom out / Reset to adjust the time range.
+      When zoomed, drag left or right inside the chart to move along the timeline.
       Click legend items to hide or show each line.
     </div>
 
@@ -310,24 +310,36 @@
     const zoomOutBtn = d3.select("#zoom-out");
     const zoomResetBtn = d3.select("#zoom-reset");
 
+    // Drag state
+    let isDragging = false;
+    let dragStartX = null;
+    let dragStartDomain = null;
+
     // ---------- Helpers ----------
 
     // Normalize state names to avoid duplicates
     function normalizeStateName(name) {
       if (!name) return name;
-      let cleaned = name.replace(/\*/g, "").trim(); // remove asterisks
+      let cleaned = name.replace(/\*/g, "").trim();
+      const lower = cleaned.toLowerCase();
 
       // American Samoa variations
-      if (/^amer\.?\s*samoa$/i.test(cleaned)) {
-        cleaned = "American Samoa";
+      if (lower.startsWith("amer.") && lower.includes("samoa")) {
+        return "American Samoa";
+      }
+      if (lower === "american samoa") {
+        return "American Samoa";
       }
 
       // District of Columbia variations
-      if (/^dist\.?\s*of\.?\s*col\.?$/i.test(cleaned)) {
-        cleaned = "District of Columbia";
+      if (lower.startsWith("dist.") && lower.includes("col")) {
+        return "District of Columbia";
       }
-      if (/^district\s+of\s+columbia$/i.test(cleaned)) {
-        cleaned = "District of Columbia";
+      if (lower === "district of columbia") {
+        return "District of Columbia";
+      }
+      if (lower === "district of columbia.") {
+        return "District of Columbia";
       }
 
       return cleaned;
@@ -396,12 +408,10 @@
 
       let xAxis;
       if (spanMonths <= 18) {
-        // Zoomed in: month + year
         xAxis = d3.axisBottom(xScale)
           .ticks(d3.timeMonth.every(3))
           .tickFormat(d3.timeFormat("%b %Y"));
       } else {
-        // Zoomed out: year only
         xAxis = d3.axisBottom(xScale)
           .ticks(d3.timeYear.every(1))
           .tickFormat(d3.timeFormat("%Y"));
@@ -508,14 +518,51 @@
           updateChart(currentState, currentMode, true);
         });
 
-        // Tooltip + click zoom
+        // Tooltip + drag-pan
+        overlay
+          .on("mousedown", function(event) {
+            if (!fullDomain) return;
+            isDragging = true;
+            const [mx] = d3.pointer(event, this);
+            dragStartX = mx;
+            const d0 = xScale.domain();
+            dragStartDomain = [new Date(d0[0].getTime()), new Date(d0[1].getTime())];
+          });
+
+        d3.select(window).on("mouseup", () => {
+          isDragging = false;
+        });
+
         overlay
           .on("mousemove", function(event) {
+            const [mx] = d3.pointer(event, this);
+
+            if (isDragging && dragStartDomain && fullDomain) {
+              const dx = mx - dragStartX;
+              const domainSpan = dragStartDomain[1] - dragStartDomain[0];
+              const offsetMs = -dx / width * domainSpan;
+
+              let newStart = new Date(dragStartDomain[0].getTime() + offsetMs);
+              let newEnd = new Date(dragStartDomain[1].getTime() + offsetMs);
+
+              if (newStart < fullDomain[0]) {
+                newStart = fullDomain[0];
+                newEnd = new Date(newStart.getTime() + domainSpan);
+              }
+              if (newEnd > fullDomain[1]) {
+                newEnd = fullDomain[1];
+                newStart = new Date(newEnd.getTime() - domainSpan);
+              }
+
+              xScale.domain([newStart, newEnd]);
+              updateChart(currentState, currentMode, true);
+              return;
+            }
+
+            // Tooltip (only when not dragging)
             if (!currentSeriesData.length) return;
 
-            const [mx] = d3.pointer(event, this);
             const x0 = xScale.invert(mx);
-
             const refSeries = currentSeriesData[0];
             if (!refSeries || !refSeries.values.length) return;
 
@@ -552,39 +599,8 @@
               .style("top", (event.pageY - 28) + "px");
           })
           .on("mouseleave", () => {
+            isDragging = false;
             tooltip.style("opacity", 0);
-          })
-          .on("click", function(event) {
-            // Zoom in centered on click
-            if (!fullDomain) return;
-            const [mx] = d3.pointer(event, this);
-            const x0 = xScale.invert(mx);
-            const domain = xScale.domain();
-            const span = domain[1] - domain[0];
-            const newSpan = span / 2;
-            const minSpan = 1000 * 60 * 60 * 24 * 90; // ~3 months
-            if (newSpan < minSpan) return;
-
-            let newStart = new Date(x0.getTime() - newSpan / 2);
-            let newEnd = new Date(x0.getTime() + newSpan / 2);
-
-            if (newStart < fullDomain[0]) {
-              newStart = fullDomain[0];
-              newEnd = new Date(newStart.getTime() + newSpan);
-            }
-            if (newEnd > fullDomain[1]) {
-              newEnd = fullDomain[1];
-              newStart = new Date(newEnd.getTime() - newSpan);
-            }
-
-            xScale.domain([newStart, newEnd]);
-            updateChart(currentState, currentMode, true);
-          })
-          .on("dblclick", () => {
-            // Reset zoom
-            if (!fullDomain) return;
-            xScale.domain(fullDomain);
-            updateChart(currentState, currentMode, true);
           });
 
         // Initial draw
