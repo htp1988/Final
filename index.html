@@ -62,7 +62,7 @@
     #controls {
       margin: 14px 0 10px 0;
       padding: 10px 12px;
-      border-radius: 4px;
+      border-radius: 10px;
       background: #f3f7fb;
       border: 1px solid #d7e2f4;
       display: flex;
@@ -91,6 +91,20 @@
     #mode-controls label {
       font-weight: normal;
       margin-right: 8px;
+    }
+
+    .zoom-controls button {
+      margin-right: 6px;
+      padding: 4px 8px;
+      font-size: 0.85rem;
+      border-radius: 4px;
+      border: 1px solid #c0c0c0;
+      background: #ffffff;
+      cursor: pointer;
+    }
+
+    .zoom-controls button:hover {
+      background: #eef3ff;
     }
 
     svg {
@@ -122,11 +136,11 @@
       stroke: var(--green);
     }
 
-    .line.share-viii {
+    .line.share_viii {
       stroke: var(--orange);
     }
 
-    .line.share-newly {
+    .line.share_newly {
       stroke: var(--green);
     }
 
@@ -145,12 +159,12 @@
       stroke: none;
     }
 
-    /* Dim non-focused legend items when one series is focused */
-    .legend.inactive text {
+    /* Dim hidden legend items */
+    .legend.hidden text {
       opacity: 0.35;
     }
 
-    .legend.inactive rect {
+    .legend.hidden rect {
       opacity: 0.3;
     }
 
@@ -205,6 +219,12 @@
           Expansion share (%)
         </label>
       </div>
+
+      <div class="zoom-controls">
+        <button id="zoom-in">Zoom in</button>
+        <button id="zoom-out">Zoom out</button>
+        <button id="zoom-reset">Reset</button>
+      </div>
     </div>
 
     <div class="chart-title" id="chart-title">
@@ -212,9 +232,9 @@
     </div>
     <svg id="chart" width="900" height="420"></svg>
     <div class="hint">
-      Tip: Click in the chart to zoom in (time range halves around the click).
-      Double-click to reset. Click a legend item to focus on that line and
-      rescale the y-axis; click again to go back to the shared scale.
+      Tip: Use Zoom in / Zoom out / Reset to adjust the time range.
+      You can also click inside the chart to zoom in around that point, and double-click to reset.
+      Click legend items to hide or show each line.
     </div>
 
     <div id="tooltip" class="tooltip" style="opacity: 0;"></div>
@@ -286,6 +306,10 @@
     const modeInputs = d3.selectAll("input[name='mode']");
     const chartTitle = d3.select("#chart-title");
 
+    const zoomInBtn = d3.select("#zoom-in");
+    const zoomOutBtn = d3.select("#zoom-out");
+    const zoomResetBtn = d3.select("#zoom-reset");
+
     // ---------- Helpers ----------
 
     // Normalize state names to avoid duplicates
@@ -299,7 +323,7 @@
       }
 
       // District of Columbia variations
-      if (/^dist\.?\s*of\.?\s*col$/i.test(cleaned)) {
+      if (/^dist\.?\s*of\.?\s*col\.?$/i.test(cleaned)) {
         cleaned = "District of Columbia";
       }
       if (/^district\s+of\s+columbia$/i.test(cleaned)) {
@@ -326,12 +350,23 @@
       { id: "share_newly", label: "Newly eligible VIII \u00f7 Total Medicaid", color: "#2ca02c" }
     ];
 
+    // Visibility state for legend toggles
+    const visibilityCounts = {
+      total: true,
+      viii: true,
+      newly: true
+    };
+
+    const visibilityShare = {
+      share_viii: true,
+      share_newly: true
+    };
+
     let rawData = [];
     let currentState = null;
     let currentMode = "counts";
     let currentSeriesData = [];
-    let fullDomain = null;
-    let focusedSeriesId = null;  // which series is focused via legend
+    let fullDomain = null; // full x-domain for current state (all years)
 
     const legendG = chartG.append("g")
       .attr("class", "legend")
@@ -373,6 +408,38 @@
       }
 
       xAxisG.transition().call(xAxis);
+    }
+
+    // Zoom helper (buttons)
+    function zoomBy(factor) {
+      if (!fullDomain) return;
+
+      const domain = xScale.domain();
+      const center = (domain[0].getTime() + domain[1].getTime()) / 2;
+      const span = domain[1] - domain[0];
+      const fullSpan = fullDomain[1] - fullDomain[0];
+
+      let newSpan = span * factor;
+      const minSpan = 1000 * 60 * 60 * 24 * 90; // ~3 months
+      const maxSpan = fullSpan;
+
+      if (factor < 1 && newSpan < minSpan) newSpan = minSpan;
+      if (factor > 1 && newSpan > maxSpan) newSpan = maxSpan;
+
+      let newStart = new Date(center - newSpan / 2);
+      let newEnd = new Date(center + newSpan / 2);
+
+      if (newStart < fullDomain[0]) {
+        newStart = fullDomain[0];
+        newEnd = new Date(newStart.getTime() + newSpan);
+      }
+      if (newEnd > fullDomain[1]) {
+        newEnd = fullDomain[1];
+        newStart = new Date(newEnd.getTime() - newSpan);
+      }
+
+      xScale.domain([newStart, newEnd]);
+      updateChart(currentState, currentMode, true);
     }
 
     // ----- Load and prepare data -----
@@ -419,19 +486,26 @@
         stateSelect.property("value", defaultState);
         currentState = defaultState;
 
-        // Handlers
+        // Handlers: state, mode
         stateSelect.on("change", () => {
           currentState = stateSelect.property("value");
           fullDomain = null;
-          focusedSeriesId = null;
           updateChart(currentState, currentMode, false);
         });
 
         modeInputs.on("change", (event) => {
           currentMode = event.target.value;
-          focusedSeriesId = null; // reset focus when switching mode
           fullDomain = null;
           updateChart(currentState, currentMode, false);
+        });
+
+        // Zoom buttons
+        zoomInBtn.on("click", () => zoomBy(0.5));
+        zoomOutBtn.on("click", () => zoomBy(2));
+        zoomResetBtn.on("click", () => {
+          if (!fullDomain) return;
+          xScale.domain(fullDomain);
+          updateChart(currentState, currentMode, true);
         });
 
         // Tooltip + click zoom
@@ -481,15 +555,13 @@
             tooltip.style("opacity", 0);
           })
           .on("click", function(event) {
-            // Step zoom: halve time window centered on click
-            if (!currentSeriesData.length || !fullDomain) return;
-
+            // Zoom in centered on click
+            if (!fullDomain) return;
             const [mx] = d3.pointer(event, this);
             const x0 = xScale.invert(mx);
             const domain = xScale.domain();
             const span = domain[1] - domain[0];
             const newSpan = span / 2;
-
             const minSpan = 1000 * 60 * 60 * 24 * 90; // ~3 months
             if (newSpan < minSpan) return;
 
@@ -538,13 +610,13 @@
       // Sort by date
       stateRows.sort((a, b) => a.date - b.date);
 
-      let seriesData = [];
+      let seriesDataAll = [];
 
       if (mode === "counts") {
         chartTitle.text(`Enrollment counts for ${displayStateName(stateName)}`);
         yLabel.text("Number of enrollees");
 
-        seriesData = [
+        seriesDataAll = [
           {
             id: "total",
             label: "Total Medicaid enrollees",
@@ -578,7 +650,7 @@
         chartTitle.text(`Expansion share for ${displayStateName(stateName)}`);
         yLabel.text("Expansion share (%)");
 
-        seriesData = [
+        seriesDataAll = [
           {
             id: "share_viii",
             label: "VIII group \u00f7 Total Medicaid",
@@ -604,6 +676,14 @@
         ];
       }
 
+      // Apply legend visibility
+      let seriesData;
+      if (mode === "counts") {
+        seriesData = seriesDataAll.filter(s => visibilityCounts[s.id] !== false);
+      } else {
+        seriesData = seriesDataAll.filter(s => visibilityShare[s.id] !== false);
+      }
+
       currentSeriesData = seriesData;
 
       if (!seriesData.length || !seriesData[0].values.length) {
@@ -614,61 +694,24 @@
 
       // x-domain: full period for this state, or keep zoomed
       if (!keepXDomain || !fullDomain) {
-        const allDates = seriesData.flatMap(s => s.values.map(v => v.date));
-        fullDomain = d3.extent(allDates);
+        fullDomain = d3.extent(stateRows, d => d.date);
         xScale.domain(fullDomain);
       }
 
       const domain = xScale.domain();
 
-      // Values in visible x-range
-      const allVisibleValues = seriesData.flatMap(s =>
+      // Values in visible x-range from visible series
+      const visibleValues = seriesData.flatMap(s =>
         s.values
           .filter(v => v.date >= domain[0] && v.date <= domain[1])
           .map(v => v.value)
       );
 
-      // y-domain (supports focusing both modes)
-      let valuesForDomain;
-
-      if (focusedSeriesId) {
-        const focusSeries = seriesData.find(s => s.id === focusedSeriesId);
-        if (focusSeries) {
-          valuesForDomain = focusSeries.values
-            .filter(v => v.date >= domain[0] && v.date <= domain[1])
-            .map(v => v.value);
-        } else {
-          valuesForDomain = allVisibleValues;
-        }
+      let maxVal = d3.max(visibleValues);
+      if (mode === "share") {
+        yScale.domain([0, Math.min(100, maxVal ? maxVal * 1.1 : 100)]);
       } else {
-        valuesForDomain = allVisibleValues;
-      }
-
-      let minVal = d3.min(valuesForDomain);
-      let maxVal = d3.max(valuesForDomain);
-
-      if (!valuesForDomain.length || maxVal == null) {
-        minVal = 0;
-        maxVal = (mode === "share") ? 100 : 1;
-      }
-
-      if (focusedSeriesId) {
-        const range = maxVal - minVal || maxVal || 1;
-        const padding = range * 0.1;
-        if (mode === "share") {
-          yScale.domain([
-            Math.max(0, minVal - padding),
-            Math.min(100, maxVal + padding)
-          ]);
-        } else {
-          yScale.domain([Math.max(0, minVal - padding), maxVal + padding]);
-        }
-      } else {
-        if (mode === "share") {
-          yScale.domain([0, Math.min(100, maxVal ? maxVal * 1.1 : 100)]);
-        } else {
-          yScale.domain([0, maxVal ? maxVal * 1.1 : 1]);
-        }
+        yScale.domain([0, maxVal ? maxVal * 1.1 : 1]);
       }
 
       // Axes
@@ -693,16 +736,7 @@
       const legendEnter = legendItems.enter()
         .append("g")
         .attr("class", "legend-item")
-        .attr("transform", (d, i) => `translate(${i * 250},0)`)
-        .on("click", (event, d) => {
-          // Toggle focus
-          if (focusedSeriesId === d.id) {
-            focusedSeriesId = null;
-          } else {
-            focusedSeriesId = d.id;
-          }
-          updateChart(currentState, currentMode, false);
-        });
+        .attr("transform", (d, i) => `translate(${i * 250},0)`);
 
       legendEnter.append("rect")
         .attr("x", 0)
@@ -717,17 +751,34 @@
         .attr("alignment-baseline", "middle")
         .text(d => d.label);
 
-      legendItems.select("rect").attr("fill", d => d.color);
-      legendItems.select("text").text(d => d.label);
-
-      legendItems
+      // Update + merge
+      const legendMerge = legendItems.merge(legendEnter)
         .attr("transform", (d, i) => `translate(${i * 250},0)`);
+
+      legendMerge.select("rect").attr("fill", d => d.color);
+      legendMerge.select("text").text(d => d.label);
+
+      // Click handler: hide/show series
+      legendMerge.on("click", (event, d) => {
+        if (mode === "counts") {
+          visibilityCounts[d.id] = !visibilityCounts[d.id];
+        } else {
+          visibilityShare[d.id] = !visibilityShare[d.id];
+        }
+        updateChart(currentState, currentMode, false);
+      });
 
       legendItems.exit().remove();
 
-      // Dim non-focused items when focused
+      // Dim hidden items
       legendG.selectAll("g.legend-item")
-        .classed("inactive", d => focusedSeriesId && d.id !== focusedSeriesId);
+        .classed("hidden", d => {
+          if (mode === "counts") {
+            return visibilityCounts[d.id] === false;
+          } else {
+            return visibilityShare[d.id] === false;
+          }
+        });
 
       // ------- Draw lines -------
       const lines = lineGroup.selectAll("path.series")
