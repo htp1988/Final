@@ -286,6 +286,29 @@
     const modeInputs = d3.selectAll("input[name='mode']");
     const chartTitle = d3.select("#chart-title");
 
+    // ---------- Helpers ----------
+
+    // Normalize state names to avoid duplicates
+    function normalizeStateName(name) {
+      if (!name) return name;
+      let cleaned = name.replace(/\*/g, "").trim(); // remove asterisks
+
+      // American Samoa variations
+      if (/^amer\.?\s*samoa$/i.test(cleaned)) {
+        cleaned = "American Samoa";
+      }
+
+      // District of Columbia variations
+      if (/^dist\.?\s*of\.?\s*col$/i.test(cleaned)) {
+        cleaned = "District of Columbia";
+      }
+      if (/^district\s+of\s+columbia$/i.test(cleaned)) {
+        cleaned = "District of Columbia";
+      }
+
+      return cleaned;
+    }
+
     // Display name helper (Totals -> U.S.)
     function displayStateName(s) {
       return s === "Totals" ? "United States (total)" : s;
@@ -355,6 +378,11 @@
     // ----- Load and prepare data -----
     d3.csv("medicaid_12012025.csv", d3.autoType)
       .then(data => {
+        // Normalize state names first
+        data.forEach(d => {
+          d.State = normalizeStateName(d.State);
+        });
+
         // Keep 2014–2021 only, then create date
         data = data.filter(d =>
           d["Enrollment Year"] >= 2014 &&
