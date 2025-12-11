@@ -233,7 +233,7 @@
     <svg id="chart" width="900" height="420"></svg>
     <div class="hint">
       Use Zoom in / Zoom out / Reset to adjust the time range.
-      When zoomed, drag left or right inside the chart to move along the timeline.
+      When zoomed, drag left/right and up/down inside the chart to move the view.
       Click legend items to hide or show each line.
     </div>
 
@@ -246,11 +246,9 @@
     const width = +svg.attr("width") - margin.left - margin.right;
     const height = +svg.attr("height") - margin.top - margin.bottom;
 
-    // Main chart group
     const chartG = svg.append("g")
       .attr("transform", `translate(${margin.left},${margin.top})`);
 
-    // Clip path so lines don't draw outside the plot area
     const defs = svg.append("defs");
     defs.append("clipPath")
       .attr("id", "plot-clip")
@@ -258,7 +256,6 @@
       .attr("width", width)
       .attr("height", height);
 
-    // Group that is clipped (lines + overlay go here)
     const plotArea = chartG.append("g")
       .attr("class", "plot-area")
       .attr("clip-path", "url(#plot-clip)");
@@ -273,7 +270,6 @@
     const yAxisG = chartG.append("g")
       .attr("class", "axis y-axis");
 
-    // Axis labels
     chartG.append("text")
       .attr("text-anchor", "middle")
       .attr("x", width / 2)
@@ -313,9 +309,9 @@
     // Drag state
     let isDragging = false;
     let dragStartX = null;
-    let dragStartDomain = null;
-
-    // ---------- Helpers ----------
+    let dragStartY = null;
+    let dragStartXDomain = null;
+    let dragStartYDomain = null;
 
     // Normalize state names to avoid duplicates
     function normalizeStateName(name) {
@@ -335,22 +331,17 @@
       if (lower.startsWith("dist.") && lower.includes("col")) {
         return "District of Columbia";
       }
-      if (lower === "district of columbia") {
-        return "District of Columbia";
-      }
-      if (lower === "district of columbia.") {
+      if (lower === "district of columbia" || lower === "district of columbia.") {
         return "District of Columbia";
       }
 
       return cleaned;
     }
 
-    // Display name helper (Totals -> U.S.)
     function displayStateName(s) {
       return s === "Totals" ? "United States (total)" : s;
     }
 
-    // Legend configs for each mode
     const legendConfigCounts = [
       { id: "total",  label: "Total Medicaid enrollees", color: "#1f77b4" },
       { id: "viii",   label: "VIII group enrollees",     color: "#ff7f0e" },
@@ -362,23 +353,15 @@
       { id: "share_newly", label: "Newly eligible VIII \u00f7 Total Medicaid", color: "#2ca02c" }
     ];
 
-    // Visibility state for legend toggles
-    const visibilityCounts = {
-      total: true,
-      viii: true,
-      newly: true
-    };
-
-    const visibilityShare = {
-      share_viii: true,
-      share_newly: true
-    };
+    const visibilityCounts = { total: true, viii: true, newly: true };
+    const visibilityShare  = { share_viii: true, share_newly: true };
 
     let rawData = [];
     let currentState = null;
     let currentMode = "counts";
     let currentSeriesData = [];
-    let fullDomain = null; // full x-domain for current state (all years)
+    let fullDomain = null;       // x full domain for state
+    let yUserDomain = null;      // custom y-domain when zooming/panning
 
     const legendG = chartG.append("g")
       .attr("class", "legend")
@@ -397,10 +380,8 @@
       .x(d => xScale(d.date))
       .y(d => yScale(d.value));
 
-    // Group where we draw the line paths
     const lineGroup = plotArea.append("g");
 
-    // Helper: draw x-axis differently depending on zoom level
     function drawXAxis() {
       const domain = xScale.domain();
       const spanMs = domain[1] - domain[0];
@@ -420,10 +401,10 @@
       xAxisG.transition().call(xAxis);
     }
 
-    // Zoom helper (buttons)
     function zoomBy(factor) {
       if (!fullDomain) return;
 
+      // X zoom
       const domain = xScale.domain();
       const center = (domain[0].getTime() + domain[1].getTime()) / 2;
       const span = domain[1] - domain[0];
@@ -432,7 +413,6 @@
       let newSpan = span * factor;
       const minSpan = 1000 * 60 * 60 * 24 * 90; // ~3 months
       const maxSpan = fullSpan;
-
       if (factor < 1 && newSpan < minSpan) newSpan = minSpan;
       if (factor > 1 && newSpan > maxSpan) newSpan = maxSpan;
 
@@ -449,18 +429,35 @@
       }
 
       xScale.domain([newStart, newEnd]);
+
+      // Y zoom (scale current y-domain)
+      const currY = yScale.domain();
+      const yCenter = (currY[0] + currY[1]) / 2;
+      let ySpan = (currY[1] - currY[0]) * factor;
+      if (ySpan <= 0) ySpan = currY[1] - currY[0] || 1;
+
+      let y0 = yCenter - ySpan / 2;
+      let y1 = yCenter + ySpan / 2;
+
+      if (currentMode === "share") {
+        y0 = Math.max(0, y0);
+        y1 = Math.min(100, y1);
+        if (y1 <= y0) { y0 = 0; y1 = 100; }
+      } else {
+        if (y1 <= y0) { y0 = Math.max(0, currY[0]); y1 = currY[1]; }
+      }
+
+      yUserDomain = [y0, y1];
+
       updateChart(currentState, currentMode, true);
     }
 
-    // ----- Load and prepare data -----
     d3.csv("medicaid_12012025.csv", d3.autoType)
       .then(data => {
-        // Normalize state names first
         data.forEach(d => {
           d.State = normalizeStateName(d.State);
         });
 
-        // Keep 2014–2021 only, then create date
         data = data.filter(d =>
           d["Enrollment Year"] >= 2014 &&
           d["Enrollment Year"] <= 2021
@@ -472,10 +469,8 @@
 
         rawData = data;
 
-        // States list, with Totals first if present
         let states = Array.from(new Set(rawData.map(d => d.State)));
         const hasTotals = states.includes("Totals");
-
         if (hasTotals) {
           states = states.filter(s => s !== "Totals");
           states.sort(d3.ascending);
@@ -491,42 +486,42 @@
           .attr("value", d => d)
           .text(d => displayStateName(d));
 
-        // Default state: U.S. total if available, else first state
         const defaultState = hasTotals ? "Totals" : states[0];
         stateSelect.property("value", defaultState);
         currentState = defaultState;
 
-        // Handlers: state, mode
         stateSelect.on("change", () => {
           currentState = stateSelect.property("value");
           fullDomain = null;
+          yUserDomain = null;
           updateChart(currentState, currentMode, false);
         });
 
         modeInputs.on("change", (event) => {
           currentMode = event.target.value;
           fullDomain = null;
+          yUserDomain = null;
           updateChart(currentState, currentMode, false);
         });
 
-        // Zoom buttons
         zoomInBtn.on("click", () => zoomBy(0.5));
         zoomOutBtn.on("click", () => zoomBy(2));
         zoomResetBtn.on("click", () => {
           if (!fullDomain) return;
           xScale.domain(fullDomain);
+          yUserDomain = null;
           updateChart(currentState, currentMode, true);
         });
 
-        // Tooltip + drag-pan
         overlay
           .on("mousedown", function(event) {
             if (!fullDomain) return;
             isDragging = true;
-            const [mx] = d3.pointer(event, this);
+            const [mx, my] = d3.pointer(event, this);
             dragStartX = mx;
-            const d0 = xScale.domain();
-            dragStartDomain = [new Date(d0[0].getTime()), new Date(d0[1].getTime())];
+            dragStartY = my;
+            dragStartXDomain = xScale.domain().map(d => new Date(d));
+            dragStartYDomain = yScale.domain().slice();
           });
 
         d3.select(window).on("mouseup", () => {
@@ -535,26 +530,46 @@
 
         overlay
           .on("mousemove", function(event) {
-            const [mx] = d3.pointer(event, this);
+            const [mx, my] = d3.pointer(event, this);
 
-            if (isDragging && dragStartDomain && fullDomain) {
+            if (isDragging && dragStartXDomain && dragStartYDomain && fullDomain) {
               const dx = mx - dragStartX;
-              const domainSpan = dragStartDomain[1] - dragStartDomain[0];
-              const offsetMs = -dx / width * domainSpan;
+              const dy = my - dragStartY;
 
-              let newStart = new Date(dragStartDomain[0].getTime() + offsetMs);
-              let newEnd = new Date(dragStartDomain[1].getTime() + offsetMs);
+              // Horizontal pan
+              const xSpan = dragStartXDomain[1] - dragStartXDomain[0];
+              const offsetMs = -dx / width * xSpan;
+              let newStart = new Date(dragStartXDomain[0].getTime() + offsetMs);
+              let newEnd = new Date(dragStartXDomain[1].getTime() + offsetMs);
 
               if (newStart < fullDomain[0]) {
                 newStart = fullDomain[0];
-                newEnd = new Date(newStart.getTime() + domainSpan);
+                newEnd = new Date(newStart.getTime() + xSpan);
               }
               if (newEnd > fullDomain[1]) {
                 newEnd = fullDomain[1];
-                newStart = new Date(newEnd.getTime() - domainSpan);
+                newStart = new Date(newEnd.getTime() - xSpan);
+              }
+              xScale.domain([newStart, newEnd]);
+
+              // Vertical pan
+              const ySpan = dragStartYDomain[1] - dragStartYDomain[0];
+              const offsetVal = -dy / height * ySpan;
+              let y0 = dragStartYDomain[0] + offsetVal;
+              let y1 = dragStartYDomain[1] + offsetVal;
+
+              if (currentMode === "share") {
+                if (y1 - y0 < 1) {
+                  const mid = (y0 + y1) / 2;
+                  y0 = mid - 0.5;
+                  y1 = mid + 0.5;
+                }
+                y0 = Math.max(0, y0);
+                y1 = Math.min(100, y1);
               }
 
-              xScale.domain([newStart, newEnd]);
+              yUserDomain = [y0, y1];
+
               updateChart(currentState, currentMode, true);
               return;
             }
@@ -603,7 +618,6 @@
             tooltip.style("opacity", 0);
           });
 
-        // Initial draw
         updateChart(currentState, currentMode, false);
       })
       .catch(err => {
@@ -623,7 +637,6 @@
         noDataText.style("display", "none");
       }
 
-      // Sort by date
       stateRows.sort((a, b) => a.date - b.date);
 
       let seriesDataAll = [];
@@ -661,7 +674,6 @@
             })).filter(d => d.value != null && !isNaN(d.value))
           }
         ];
-
       } else {
         chartTitle.text(`Expansion share for ${displayStateName(stateName)}`);
         yLabel.text("Expansion share (%)");
@@ -692,7 +704,6 @@
         ];
       }
 
-      // Apply legend visibility
       let seriesData;
       if (mode === "counts") {
         seriesData = seriesDataAll.filter(s => visibilityCounts[s.id] !== false);
@@ -708,29 +719,48 @@
         return;
       }
 
-      // x-domain: full period for this state, or keep zoomed
       if (!keepXDomain || !fullDomain) {
         fullDomain = d3.extent(stateRows, d => d.date);
         xScale.domain(fullDomain);
+        if (!keepXDomain) yUserDomain = null;
       }
 
       const domain = xScale.domain();
-
-      // Values in visible x-range from visible series
       const visibleValues = seriesData.flatMap(s =>
         s.values
           .filter(v => v.date >= domain[0] && v.date <= domain[1])
           .map(v => v.value)
       );
 
+      let minVal = d3.min(visibleValues);
       let maxVal = d3.max(visibleValues);
-      if (mode === "share") {
-        yScale.domain([0, Math.min(100, maxVal ? maxVal * 1.1 : 100)]);
-      } else {
-        yScale.domain([0, maxVal ? maxVal * 1.1 : 1]);
+      if (minVal == null || maxVal == null) {
+        minVal = 0;
+        maxVal = (mode === "share") ? 100 : 1;
       }
 
-      // Axes
+      const range = (maxVal - minVal) || maxVal || 1;
+      const padding = range * 0.1;
+
+      let baseDomain;
+      if (mode === "share") {
+        baseDomain = [
+          Math.max(0, minVal - padding),
+          Math.min(100, maxVal + padding)
+        ];
+      } else {
+        baseDomain = [
+          Math.max(0, minVal - padding),
+          maxVal + padding
+        ];
+      }
+
+      if (yUserDomain == null) {
+        yScale.domain(baseDomain);
+      } else {
+        yScale.domain(yUserDomain);
+      }
+
       drawXAxis();
 
       if (mode === "share") {
@@ -743,7 +773,6 @@
         );
       }
 
-      // ------- Legend (switch by mode) -------
       const legendConfig = mode === "counts" ? legendConfigCounts : legendConfigShare;
 
       const legendItems = legendG.selectAll("g.legend-item")
@@ -767,26 +796,24 @@
         .attr("alignment-baseline", "middle")
         .text(d => d.label);
 
-      // Update + merge
       const legendMerge = legendItems.merge(legendEnter)
         .attr("transform", (d, i) => `translate(${i * 250},0)`);
 
       legendMerge.select("rect").attr("fill", d => d.color);
       legendMerge.select("text").text(d => d.label);
 
-      // Click handler: hide/show series
       legendMerge.on("click", (event, d) => {
         if (mode === "counts") {
           visibilityCounts[d.id] = !visibilityCounts[d.id];
         } else {
           visibilityShare[d.id] = !visibilityShare[d.id];
         }
+        yUserDomain = null; // recalc y from visible lines
         updateChart(currentState, currentMode, false);
       });
 
       legendItems.exit().remove();
 
-      // Dim hidden items
       legendG.selectAll("g.legend-item")
         .classed("hidden", d => {
           if (mode === "counts") {
@@ -796,7 +823,6 @@
           }
         });
 
-      // ------- Draw lines -------
       const lines = lineGroup.selectAll("path.series")
         .data(seriesData, d => d.id);
 
