@@ -122,7 +122,11 @@
       stroke: var(--green);
     }
 
-    .line.share {
+    .line.share-viii {
+      stroke: var(--orange);
+    }
+
+    .line.share-newly {
       stroke: var(--green);
     }
 
@@ -141,7 +145,7 @@
       stroke: none;
     }
 
-    /* Dim non-focused series when one is focused */
+    /* Dim non-focused legend items when one series is focused */
     .legend.inactive text {
       opacity: 0.35;
     }
@@ -209,8 +213,8 @@
     <svg id="chart" width="900" height="420"></svg>
     <div class="hint">
       Tip: Click in the chart to zoom in (time range halves around the click).
-      Double-click to reset. In counts mode, click a legend item to focus on that line
-      and rescale the y-axis; click again to go back to the shared scale.
+      Double-click to reset. Click a legend item to focus on that line and
+      rescale the y-axis; click again to go back to the shared scale.
     </div>
 
     <div id="tooltip" class="tooltip" style="opacity: 0;"></div>
@@ -287,26 +291,16 @@
       return s === "Totals" ? "United States (total)" : s;
     }
 
-    // Series configuration for counts mode
-    const seriesConfig = [
-      {
-        key: "Total Medicaid Enrollees",
-        id: "total",
-        label: "Total Medicaid enrollees",
-        color: "#1f77b4"
-      },
-      {
-        key: "Total VIII Group Enrollees",
-        id: "viii",
-        label: "VIII group enrollees",
-        color: "#ff7f0e"
-      },
-      {
-        key: "Total VIII Group Newly Eligible Enrollees",
-        id: "newly",
-        label: "Newly eligible VIII enrollees",
-        color: "#2ca02c"
-      }
+    // Legend configs for each mode
+    const legendConfigCounts = [
+      { id: "total",  label: "Total Medicaid enrollees", color: "#1f77b4" },
+      { id: "viii",   label: "VIII group enrollees",     color: "#ff7f0e" },
+      { id: "newly",  label: "Newly eligible VIII enrollees", color: "#2ca02c" }
+    ];
+
+    const legendConfigShare = [
+      { id: "share_viii",  label: "VIII group \u00f7 Total Medicaid",         color: "#ff7f0e" },
+      { id: "share_newly", label: "Newly eligible VIII \u00f7 Total Medicaid", color: "#2ca02c" }
     ];
 
     let rawData = [];
@@ -314,7 +308,7 @@
     let currentMode = "counts";
     let currentSeriesData = [];
     let fullDomain = null;
-    let focusedSeriesId = null;  // which series is focused via legend (counts mode only)
+    let focusedSeriesId = null;  // which series is focused via legend
 
     const legendG = chartG.append("g")
       .attr("class", "legend")
@@ -347,7 +341,7 @@
         // Zoomed in: month + year
         xAxis = d3.axisBottom(xScale)
           .ticks(d3.timeMonth.every(3))
-          .tickFormat(d3.timeFormat("%b %Y")); // Jan 2018, etc.
+          .tickFormat(d3.timeFormat("%b %Y"));
       } else {
         // Zoomed out: year only
         xAxis = d3.axisBottom(xScale)
@@ -392,37 +386,6 @@
           .attr("value", d => d)
           .text(d => displayStateName(d));
 
-        // Legend
-        const legendItems = legendG.selectAll("g.legend-item")
-          .data(seriesConfig)
-          .enter()
-          .append("g")
-          .attr("class", "legend-item")
-          .attr("transform", (d, i) => `translate(${i * 210},0)`)
-          .on("click", (event, d) => {
-            if (currentMode !== "counts") return;
-            // Toggle focus: click once to focus on this series, again to reset
-            if (focusedSeriesId === d.id) {
-              focusedSeriesId = null;
-            } else {
-              focusedSeriesId = d.id;
-            }
-            updateChart(currentState, currentMode, false);
-          });
-
-        legendItems.append("rect")
-          .attr("x", 0)
-          .attr("y", -10)
-          .attr("width", 12)
-          .attr("height", 12)
-          .attr("fill", d => d.color);
-
-        legendItems.append("text")
-          .attr("x", 18)
-          .attr("y", 0)
-          .attr("alignment-baseline", "middle")
-          .text(d => d.label);
-
         // Default state: U.S. total if available, else first state
         const defaultState = hasTotals ? "Totals" : states[0];
         stateSelect.property("value", defaultState);
@@ -432,13 +395,13 @@
         stateSelect.on("change", () => {
           currentState = stateSelect.property("value");
           fullDomain = null;
+          focusedSeriesId = null;
           updateChart(currentState, currentMode, false);
         });
 
         modeInputs.on("change", (event) => {
           currentMode = event.target.value;
-          // reset focused state when switching mode
-          focusedSeriesId = null;
+          focusedSeriesId = null; // reset focus when switching mode
           fullDomain = null;
           updateChart(currentState, currentMode, false);
         });
@@ -472,10 +435,12 @@
                 }
               });
             } else {
-              const pt = refSeries.values.find(p => +p.date === dateKey);
-              if (pt && pt.value != null) {
-                html += `Expansion share: ${pctFmt(pt.value)}%`;
-              }
+              currentSeriesData.forEach(series => {
+                const pt = series.values.find(p => +p.date === dateKey);
+                if (pt && pt.value != null) {
+                  html += `${series.label}: ${pctFmt(pt.value)}%<br/>`;
+                }
+              });
             }
 
             tooltip
@@ -542,7 +507,7 @@
         noDataText.style("display", "none");
       }
 
-      // Sort by date to avoid zig-zags
+      // Sort by date
       stateRows.sort((a, b) => a.date - b.date);
 
       let seriesData = [];
@@ -551,31 +516,64 @@
         chartTitle.text(`Enrollment counts for ${displayStateName(stateName)}`);
         yLabel.text("Number of enrollees");
 
-        seriesData = seriesConfig.map(cfg => {
-          const values = stateRows.map(d => ({
-            date: d.date,
-            value: d[cfg.key]
-          })).filter(d => d.value != null && !isNaN(d.value));
-          return { ...cfg, values };
-        });
+        seriesData = [
+          {
+            id: "total",
+            label: "Total Medicaid enrollees",
+            color: "#1f77b4",
+            values: stateRows.map(d => ({
+              date: d.date,
+              value: d["Total Medicaid Enrollees"]
+            })).filter(d => d.value != null && !isNaN(d.value))
+          },
+          {
+            id: "viii",
+            label: "VIII group enrollees",
+            color: "#ff7f0e",
+            values: stateRows.map(d => ({
+              date: d.date,
+              value: d["Total VIII Group Enrollees"]
+            })).filter(d => d.value != null && !isNaN(d.value))
+          },
+          {
+            id: "newly",
+            label: "Newly eligible VIII enrollees",
+            color: "#2ca02c",
+            values: stateRows.map(d => ({
+              date: d.date,
+              value: d["Total VIII Group Newly Eligible Enrollees"]
+            })).filter(d => d.value != null && !isNaN(d.value))
+          }
+        ];
 
       } else {
-        chartTitle.text(`Expansion share for ${displayStateName(stateName)} (VIII / Total)`);
+        chartTitle.text(`Expansion share for ${displayStateName(stateName)}`);
         yLabel.text("Expansion share (%)");
 
-        const values = stateRows.map(d => {
-          const total = d["Total Medicaid Enrollees"];
-          const viii = d["Total VIII Group Enrollees"];
-          const share = (total && viii) ? (viii / total) * 100 : null;
-          return { date: d.date, value: share };
-        }).filter(d => d.value != null && !isNaN(d.value));
-
-        seriesData = [{
-          id: "share",
-          label: "Expansion share",
-          color: "#2ca02c",
-          values
-        }];
+        seriesData = [
+          {
+            id: "share_viii",
+            label: "VIII group \u00f7 Total Medicaid",
+            color: "#ff7f0e",
+            values: stateRows.map(d => {
+              const total = d["Total Medicaid Enrollees"];
+              const viii = d["Total VIII Group Enrollees"];
+              const share = (total && viii) ? (viii / total) * 100 : null;
+              return { date: d.date, value: share };
+            }).filter(d => d.value != null && !isNaN(d.value))
+          },
+          {
+            id: "share_newly",
+            label: "Newly eligible VIII \u00f7 Total Medicaid",
+            color: "#2ca02c",
+            values: stateRows.map(d => {
+              const total = d["Total Medicaid Enrollees"];
+              const newly = d["Total VIII Group Newly Eligible Enrollees"];
+              const share = (total && newly) ? (newly / total) * 100 : null;
+              return { date: d.date, value: share };
+            }).filter(d => d.value != null && !isNaN(d.value))
+          }
+        ];
       }
 
       currentSeriesData = seriesData;
@@ -595,72 +593,115 @@
 
       const domain = xScale.domain();
 
-      // Values in visible x-range (for all series)
+      // Values in visible x-range
       const allVisibleValues = seriesData.flatMap(s =>
         s.values
           .filter(v => v.date >= domain[0] && v.date <= domain[1])
           .map(v => v.value)
       );
 
-      // y-domain
-      if (mode === "counts") {
-        let valuesForDomain;
+      // y-domain (supports focusing both modes)
+      let valuesForDomain;
 
-        if (focusedSeriesId) {
-          const focusSeries = seriesData.find(s => s.id === focusedSeriesId);
-          if (focusSeries) {
-            valuesForDomain = focusSeries.values
-              .filter(v => v.date >= domain[0] && v.date <= domain[1])
-              .map(v => v.value);
-          } else {
-            valuesForDomain = allVisibleValues;
-          }
+      if (focusedSeriesId) {
+        const focusSeries = seriesData.find(s => s.id === focusedSeriesId);
+        if (focusSeries) {
+          valuesForDomain = focusSeries.values
+            .filter(v => v.date >= domain[0] && v.date <= domain[1])
+            .map(v => v.value);
         } else {
           valuesForDomain = allVisibleValues;
         }
+      } else {
+        valuesForDomain = allVisibleValues;
+      }
 
-        let minVal = d3.min(valuesForDomain);
-        let maxVal = d3.max(valuesForDomain);
+      let minVal = d3.min(valuesForDomain);
+      let maxVal = d3.max(valuesForDomain);
 
-        if (!valuesForDomain.length || maxVal == null) {
-          minVal = 0;
-          maxVal = 1;
-        }
+      if (!valuesForDomain.length || maxVal == null) {
+        minVal = 0;
+        maxVal = (mode === "share") ? 100 : 1;
+      }
 
-        if (focusedSeriesId) {
-          const range = maxVal - minVal || maxVal || 1;
-          const padding = range * 0.1;
+      if (focusedSeriesId) {
+        const range = maxVal - minVal || maxVal || 1;
+        const padding = range * 0.1;
+        if (mode === "share") {
+          yScale.domain([
+            Math.max(0, minVal - padding),
+            Math.min(100, maxVal + padding)
+          ]);
+        } else {
           yScale.domain([Math.max(0, minVal - padding), maxVal + padding]);
+        }
+      } else {
+        if (mode === "share") {
+          yScale.domain([0, Math.min(100, maxVal ? maxVal * 1.1 : 100)]);
         } else {
           yScale.domain([0, maxVal ? maxVal * 1.1 : 1]);
         }
-
-      } else {
-        // share mode
-        let maxVal = d3.max(allVisibleValues);
-        yScale.domain([0, Math.min(100, maxVal ? maxVal * 1.1 : 100)]);
       }
 
-      // Dynamic x-axis & y-axis
+      // Axes
       drawXAxis();
 
-      if (mode === "counts") {
-        yAxisG.transition().call(
-          d3.axisLeft(yScale).ticks(6).tickFormat(d3.format(".2s"))
-        );
-      } else {
+      if (mode === "share") {
         yAxisG.transition().call(
           d3.axisLeft(yScale).ticks(6).tickFormat(d => d + "%")
         );
+      } else {
+        yAxisG.transition().call(
+          d3.axisLeft(yScale).ticks(6).tickFormat(d3.format(".2s"))
+        );
       }
 
-      // Legend style: dim non-focused items when focused
-      legendG.selectAll("g.legend-item")
-        .classed("inactive", d =>
-          mode === "counts" && focusedSeriesId && d.id !== focusedSeriesId
-        );
+      // ------- Legend (switch by mode) -------
+      const legendConfig = mode === "counts" ? legendConfigCounts : legendConfigShare;
 
-      // Draw lines
+      const legendItems = legendG.selectAll("g.legend-item")
+        .data(legendConfig, d => d.id);
+
+      const legendEnter = legendItems.enter()
+        .append("g")
+        .attr("class", "legend-item")
+        .attr("transform", (d, i) => `translate(${i * 250},0)`)
+        .on("click", (event, d) => {
+          // Toggle focus
+          if (focusedSeriesId === d.id) {
+            focusedSeriesId = null;
+          } else {
+            focusedSeriesId = d.id;
+          }
+          updateChart(currentState, currentMode, false);
+        });
+
+      legendEnter.append("rect")
+        .attr("x", 0)
+        .attr("y", -10)
+        .attr("width", 12)
+        .attr("height", 12)
+        .attr("fill", d => d.color);
+
+      legendEnter.append("text")
+        .attr("x", 18)
+        .attr("y", 0)
+        .attr("alignment-baseline", "middle")
+        .text(d => d.label);
+
+      legendItems.select("rect").attr("fill", d => d.color);
+      legendItems.select("text").text(d => d.label);
+
+      legendItems
+        .attr("transform", (d, i) => `translate(${i * 250},0)`);
+
+      legendItems.exit().remove();
+
+      // Dim non-focused items when focused
+      legendG.selectAll("g.legend-item")
+        .classed("inactive", d => focusedSeriesId && d.id !== focusedSeriesId);
+
+      // ------- Draw lines -------
       const lines = lineGroup.selectAll("path.series")
         .data(seriesData, d => d.id);
 
